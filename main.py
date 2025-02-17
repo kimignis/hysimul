@@ -1,7 +1,7 @@
 from simulation.greedy import run_greedy
 import sys
 
-sys.path.insert(0, '.')
+sys.path.insert(0, ".")
 
 
 def main():
@@ -21,5 +21,5 @@ def main():
         p.open_in_browser()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

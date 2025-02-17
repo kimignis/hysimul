@@ -4,30 +4,63 @@ from simulation.classes import Machine, FileRoute, Lot
 from simulation.events import BreakdownEvent
 from simulation.instance import Instance
 from simulation.randomizer import Randomizer
-from simulation.tools import get_interval, get_distribution, UniformDistribution, date_time_parse
+from simulation.tools import (
+    get_interval,
+    get_distribution,
+    UniformDistribution,
+    date_time_parse,
+)
 
 
 class FileInstance(Instance):
 
     def __init__(self, files: Dict[str, List[Dict]], run_to, lot_for_machine, plugins):
+        if plugins is None:
+            plugins = []
+
+        # stats 파라미터 초기화 (run_greedy에서 전달된 값들을 사용)
+        import sys
+
+        sys.path.insert(0, ".")
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--dataset", type=str)
+        parser.add_argument("--days", type=int)
+        parser.add_argument("--dispatcher", type=str)
+        parser.add_argument("--seed", type=int)
+        parser.add_argument("--alg", type=str, default="l4m")
+        args = parser.parse_args()
+
+        self.stats_params = {
+            "days": args.days,
+            "dataset": args.dataset,
+            "disp": args.dispatcher,
+            "method": f"greedy_seed{args.seed}",
+        }
+
         machines = []
         machine_id = 0
         r = Randomizer()
         family_locations = {}
-        for d_m in files['tool.txt.1l']:
-            for i in range(int(d_m['STNQTY'])):
+        for d_m in files["tool.txt.1l"]:
+            for i in range(int(d_m["STNQTY"])):
                 speed = 1  # r.random.uniform(0.7, 1.3)
                 m = Machine(idx=machine_id, d=d_m, speed=speed)
                 family_locations[m.family] = m.loc
                 machines.append(m)
                 machine_id += 1
 
-        from_to = {(a['FROMLOC'], a['TOLOC']): get_distribution(a['DDIST'], a['DUNITS'], a['DTIME'], a['DTIME2']) for a
-                   in files['fromto.txt']}
+        from_to = {
+            (a["FROMLOC"], a["TOLOC"]): get_distribution(
+                a["DDIST"], a["DUNITS"], a["DTIME"], a["DTIME2"]
+            )
+            for a in files["fromto.txt"]
+        }
 
-        pieces = max([a['PIECES'] for a in files['order.txt'] + files['WIP.txt']])
+        pieces = max([a["PIECES"] for a in files["order.txt"] + files["WIP.txt"]])
         routes = {}
-        route_keys = [key for key in files.keys() if 'route' in key]
+        route_keys = [key for key in files.keys() if "route" in key]
         for rk in route_keys:
             route = FileRoute(rk, pieces, files[rk])
             last_loc = None
@@ -39,67 +72,94 @@ class FileInstance(Instance):
                 last_loc = s.family_location
             routes[rk] = route
 
-        parts = {p['PART']: p['ROUTEFILE'] for p in files['part.txt']}
+        parts = {p["PART"]: p["ROUTEFILE"] for p in files["part.txt"]}
 
         lots = []
         idx = 0
         lot_pre = {}
-        for order in files['order.txt']:
-            assert pieces == order['PIECES']
+        for order in files["order.txt"]:
+            assert pieces == order["PIECES"]
             first_release = 0
-            release_interval = get_interval(order['REPEAT'], order['RUNITS'])
-            relative_deadline = (date_time_parse(order['DUE']) - date_time_parse(order['START'])).total_seconds()
+            release_interval = get_interval(order["REPEAT"], order["RUNITS"])
+            relative_deadline = (
+                date_time_parse(order["DUE"]) - date_time_parse(order["START"])
+            ).total_seconds()
 
-            for i in range(order['RPT#']):
+            for i in range(order["RPT#"]):
                 rel_time = first_release + i * release_interval
-                lot = Lot(idx, routes[parts[order['PART']]], order['PRIOR'], rel_time, relative_deadline, order)
+                lot = Lot(
+                    idx,
+                    routes[parts[order["PART"]]],
+                    order["PRIOR"],
+                    rel_time,
+                    relative_deadline,
+                    order,
+                )
                 lots.append(lot)
                 lot_pre[lot.name] = relative_deadline
                 idx += 1
                 if rel_time > run_to:
                     break
 
-        for wip in files['WIP.txt']:
-            assert pieces == wip['PIECES']
+        for wip in files["WIP.txt"]:
+            assert pieces == wip["PIECES"]
             first_release = 0
-            relative_deadline = (date_time_parse(wip['DUE']) - date_time_parse(wip['START'])).total_seconds()
-            if wip['CURSTEP'] < len(routes[parts[wip['PART']]].steps) - 1:
-                lot = Lot(idx, routes[parts[wip['PART']]], wip['PRIOR'], first_release, relative_deadline, wip)
+            relative_deadline = (
+                date_time_parse(wip["DUE"]) - date_time_parse(wip["START"])
+            ).total_seconds()
+            if wip["CURSTEP"] < len(routes[parts[wip["PART"]]].steps) - 1:
+                lot = Lot(
+                    idx,
+                    routes[parts[wip["PART"]]],
+                    wip["PRIOR"],
+                    first_release,
+                    relative_deadline,
+                    wip,
+                )
                 lots.append(lot)
                 lot.release_at = lot.deadline_at - lot_pre[lot.name]
             idx += 1
 
-        setups = {(s['CURSETUP'], s['NEWSETUP']): get_interval(s['STIME'], s['STUNITS']) for s in files['setup.txt']}
-        setup_min_run = {s['SETUP']: s['MINRUN'] for s in files['setupgrp.txt']}
+        setups = {
+            (s["CURSETUP"], s["NEWSETUP"]): get_interval(s["STIME"], s["STUNITS"])
+            for s in files["setup.txt"]
+        }
+        setup_min_run = {s["SETUP"]: s["MINRUN"] for s in files["setupgrp.txt"]}
 
         downcals = {}
-        for dc in files['downcal.txt']:
-            downcals[dc['DOWNCALNAME']] = (get_distribution(dc['MTTFDIST'], dc['MTTFUNITS'], dc['MTTF']),
-                                           get_distribution(dc['MTTRDIST'], dc['MTTRUNITS'], dc['MTTR']))
+        for dc in files["downcal.txt"]:
+            downcals[dc["DOWNCALNAME"]] = (
+                get_distribution(dc["MTTFDIST"], dc["MTTFUNITS"], dc["MTTF"]),
+                get_distribution(dc["MTTRDIST"], dc["MTTRUNITS"], dc["MTTR"]),
+            )
         pmcals = {}
-        for dc in files['pmcal.txt']:
-            pmcals[dc['PMCALNAME']] = (get_distribution('constant', dc['MTBPMUNITS'], dc['MTBPM']),
-                                       get_distribution(dc['MTTRDIST'], dc['MTTRUNITS'], dc['MTTR'], dc['MTTR2']))
+        for dc in files["pmcal.txt"]:
+            pmcals[dc["PMCALNAME"]] = (
+                get_distribution("constant", dc["MTBPMUNITS"], dc["MTBPM"]),
+                get_distribution(
+                    dc["MTTRDIST"], dc["MTTRUNITS"], dc["MTTR"], dc["MTTR2"]
+                ),
+            )
 
         breakdowns = []
-        for a in files['attach.txt']:
-            if a['RESTYPE'] == 'stngrp':
-                m_break = [m for m in machines if m.group == a['RESNAME']]
+        for a in files["attach.txt"]:
+            if a["RESTYPE"] == "stngrp":
+                m_break = [m for m in machines if m.group == a["RESNAME"]]
             else:
-                m_break = [m for m in machines if m.family == a['RESNAME']]
-            distribution = get_distribution(a['FOADIST'], a['FOAUNITS'], a['FOA'])
-            if a['CALTYPE'] == 'down':
+                m_break = [m for m in machines if m.family == a["RESNAME"]]
+            distribution = get_distribution(a["FOADIST"], a["FOAUNITS"], a["FOA"])
+            if a["CALTYPE"] == "down":
                 is_breakdown = True
-                ne, le = downcals[a['CALNAME']]
+                ne, le = downcals[a["CALNAME"]]
             else:
                 is_breakdown = False
-                ne, le = pmcals[a['CALNAME']]
+                ne, le = pmcals[a["CALNAME"]]
             if distribution is None:
                 distribution = ne
-            if a['FOAUNITS'] == '':
+            if a["FOAUNITS"] == "":
                 for m in m_break:
                     m.piece_per_maintenance.append(ne.c)
-                    m.pieces_until_maintenance.append(a['FOA'])
+                    m.pieces_until_maintenance.append(a["FOA"])
                     m.maintenance_time.append(le)
             else:
                 for m in m_break:
@@ -108,4 +168,13 @@ class FileInstance(Instance):
                         m.pms.append(br)
                     breakdowns.append(br)
 
-        super().__init__(machines, routes, lots, setups, setup_min_run, breakdowns, lot_for_machine, plugins)
+        super().__init__(
+            machines,
+            routes,
+            lots,
+            setups,
+            setup_min_run,
+            breakdowns,
+            lot_for_machine,
+            plugins,
+        )

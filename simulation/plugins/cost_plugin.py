@@ -3,6 +3,11 @@ from simulation.plugins.interface import IPlugin
 
 class CostPlugin(IPlugin):
 
+    def __init__(self):
+        super().__init__()
+        self.cost = 0
+        self.done_lots = 0
+
     def on_sim_done(self, instance):
         super().on_sim_done(instance)
         self.cost = 0
@@ -14,7 +19,7 @@ class CostPlugin(IPlugin):
 
     def get_output_name(self):
         super().get_output_name()
-        return 'cost'
+        return "cost"
 
     def get_output_value(self):
         return self.cost
